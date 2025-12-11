@@ -38,10 +38,15 @@ max_norm = 1.0  # grad norm clipping
 steps = 30_000
 compile = false
 dataset = "cc12m_preprocessed"
+# For baremetal: set dataset_path via CLI, e.g.:
+#   --training.dataset_path=$DATAROOT/cc12m_preprocessed
 classifer_free_guidance_prob = 0.1
 img_size = 256
 
 [encoder]
+# For preprocessed data, encoders are not needed (leave empty)
+# For baremetal: set empty_encodings_path via CLI, e.g.:
+#   --encoder.empty_encodings_path=$DATAROOT/empty_encodings
 t5_encoder = ""
 context_in_dim = 4096
 clip_encoder = ""
@@ -49,7 +54,7 @@ max_t5_encoding_len = 256
 autoencoder_path = ""
 autoencoder_shift = 0.1159
 autoencoder_scale = 0.3611
-empty_encodings_path = "/dataset/empty_encodings"
+empty_encodings_path = ""
 
 [eval]
 enable_classifer_free_guidance = true
@@ -58,6 +63,8 @@ denoising_steps = 50
 save_img_folder = "img"
 eval_freq = 262144
 dataset = "coco_preprocessed"
+# For baremetal: set dataset_path via CLI, e.g.:
+#   --eval.dataset_path=$DATAROOT/coco_preprocessed
 target_eval_loss = 0.586
 
 [parallelism]

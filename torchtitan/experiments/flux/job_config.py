@@ -30,9 +30,10 @@ class Encoder:
     """Clip encoder to use, HuggingFace model name. This field could be either a local folder path, \
     or a Huggingface repo name. If none, it is not loaded (assumes preprocessed data)"""
 
-    autoencoder_path: str | None = "/models/autoencoder/ae.safetensors"
+    autoencoder_path: str | None = ""
     """Autoencoder checkpoint path to load. This should be a local path referring to a safetensors file. 
-    If none, it is not loaded (assumes preprocessed data), but shift and scale must be provided"""
+    For baremetal: set via --encoder.autoencoder_path=$MODELROOT/autoencoder/ae.safetensors
+    If empty/none, it is not loaded (assumes preprocessed data), but shift and scale must be provided"""
 
     autoencoder_shift: float | None = None
     """Shift of the autoencoder. If None, will read from autoencoder_path"""
@@ -67,16 +68,17 @@ class Eval:
     save_img_folder: str = "eval_images"
     """Directory to save image generated/sampled from the model"""
 
-    inception_ckpt: str = (
-        "/checkpoint/inception_ckpt/pt_inception-2015-12-05-6726825d.pth"
-    )
-    """Inception checkpoint path to load. This should be a local path referring to a pth file."""
+    inception_ckpt: str = ""
+    """Inception checkpoint path to load. This should be a local path referring to a pth file.
+    For baremetal: set via --eval.inception_ckpt if needed for FID evaluation."""
 
-    clip_ckpt: str = "/checkpoint/clip_ckpt"
-    """Clip checkpoint path to load. This should be a local path referring to a pt file."""
+    clip_ckpt: str = ""
+    """Clip checkpoint path to load. This should be a local path referring to a pt file.
+    For baremetal: set via --eval.clip_ckpt if needed for CLIP score evaluation."""
 
-    coco_stats: str = "/checkpoint/coco_stats/val2014_512x512_30k_stats.npz"
-    """Coco stats path to load. This should be a local path referring to a npz file."""
+    coco_stats: str = ""
+    """Coco stats path to load. This should be a local path referring to a npz file.
+    For baremetal: set via --eval.coco_stats if needed for FID evaluation."""
 
     dataset: str | None = None
     """Dataset to use for validation."""

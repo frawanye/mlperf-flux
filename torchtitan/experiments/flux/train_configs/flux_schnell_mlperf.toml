@@ -38,15 +38,21 @@ max_norm = 1.0  # grad norm clipping
 steps = 30_000
 compile = false
 dataset = "cc12m_disk"
+# For baremetal: set dataset_path via CLI, e.g.:
+#   --training.dataset_path=$DATAROOT/cc12m_disk
 classifer_free_guidance_prob = 0.1
 img_size = 256
 
 [encoder]
-t5_encoder = "/models/t5"
+# For baremetal: set paths via CLI, e.g.:
+#   --encoder.t5_encoder=$MODELROOT/t5
+#   --encoder.clip_encoder=$MODELROOT/clip
+#   --encoder.autoencoder_path=$MODELROOT/autoencoder/ae.safetensors
+t5_encoder = ""
 context_in_dim = 4096
-clip_encoder = "/models/clip"
+clip_encoder = ""
 max_t5_encoding_len = 256
-autoencoder_path = "/models/autoencoder/ae.safetensors"
+autoencoder_path = ""
 autoencoder_shift = 0.1159
 autoencoder_scale = 0.3611
 
@@ -57,6 +63,8 @@ denoising_steps = 50
 save_img_folder = "img"
 eval_freq = 262144
 dataset = "coco"
+# For baremetal: set dataset_path via CLI, e.g.:
+#   --eval.dataset_path=$DATAROOT/coco
 target_eval_loss = 0.586
 
 [parallelism]
