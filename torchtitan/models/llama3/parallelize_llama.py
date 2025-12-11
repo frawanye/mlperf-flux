@@ -17,8 +17,13 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard, MixedPrecisionPolicy
 from torch.distributed.tensor import Replicate, Shard
+
+from torchtitan.distributed.fsdp_compat import (
+    CPUOffloadPolicy,
+    fully_shard,
+    MixedPrecisionPolicy,
+)
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     parallelize_module,

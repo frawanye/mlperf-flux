@@ -20,8 +20,9 @@ from model import DeepseekForCausalLM
 from model_config import deepseek_config_registry
 
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import fully_shard
 from torch.distributed.pipelining import PipelineStage, Schedule1F1B
+
+from torchtitan.distributed.fsdp_compat import fully_shard
 
 
 # Use DeepSeek-V2-Lite as a proxy

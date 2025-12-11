@@ -14,8 +14,13 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
     _PipelineSchedule,
     get_schedule_class,
-    ScheduleZBVZeroBubble,
 )
+
+# ScheduleZBVZeroBubble may not be available in all PyTorch builds (e.g., ROCm)
+try:
+    from torch.distributed.pipelining.schedules import ScheduleZBVZeroBubble
+except ImportError:
+    ScheduleZBVZeroBubble = None
 
 from torchtitan.components.loss import LossFunction
 from torchtitan.config_manager import JobConfig
@@ -140,7 +145,8 @@ def pipeline_llama_manual_split(
     models = []
 
     schedule_class = get_schedule_class(parallelism_config.pipeline_parallel_schedule)
-    style = "v" if schedule_class == ScheduleZBVZeroBubble else "loop"
+    # ScheduleZBVZeroBubble may not be available in all PyTorch builds
+    style = "v" if (ScheduleZBVZeroBubble is not None and schedule_class == ScheduleZBVZeroBubble) else "loop"
 
     for stage_idx in stage_ids_this_rank(pp_rank, pp_size, num_stages, style=style):
         start_layer = splits[stage_idx - 1] if stage_idx > 0 else None

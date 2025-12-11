@@ -11,7 +11,8 @@ import torch
 import torch.distributed as dist
 
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import fully_shard
+
+from torchtitan.distributed.fsdp_compat import fully_shard
 
 # from checkpoint import load_weights_from_hf
 from torchtitan.experiments.deepseek_v3.model import DeepseekForCausalLM
