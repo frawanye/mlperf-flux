@@ -23,7 +23,9 @@ if [ $# -ne 0 ]; then
 fi
 
 
-PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
+# ROCm/HIP memory allocator configuration (AMD GPUs)
+# For NVIDIA GPUs, change to PYTORCH_CUDA_ALLOC_CONF
+PYTORCH_HIP_ALLOC_CONF="expandable_segments:True" \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
 -m torchtitan.experiments.flux.infer --job.config_file ${CONFIG_FILE} \

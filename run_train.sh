@@ -21,7 +21,9 @@ fi
 
 TORCHFT_LIGHTHOUSE=${TORCHFT_LIGHTHOUSE:-"http://localhost:29510"}
 
-PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
+# ROCm/HIP memory allocator configuration (AMD GPUs)
+# For NVIDIA GPUs, change to PYTORCH_CUDA_ALLOC_CONF
+PYTORCH_HIP_ALLOC_CONF="expandable_segments:True" \
 TORCHFT_LIGHTHOUSE=${TORCHFT_LIGHTHOUSE} \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
