@@ -5,9 +5,32 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
 from typing import Optional
 
 import torch
+
+
+def resolve_path(path: Optional[str], env_var: str, subpath: str) -> Optional[str]:
+    """
+    Resolve a path, falling back to environment variable if path is empty.
+    
+    Args:
+        path: Configured path (may be empty)
+        env_var: Environment variable to check (e.g., "DATAROOT", "MODELROOT")
+        subpath: Subpath to append to env var (e.g., "empty_encodings", "t5")
+    
+    Returns:
+        Resolved path or None if neither path nor env var is set
+    """
+    if path:
+        return path
+    
+    base = os.environ.get(env_var)
+    if base:
+        return os.path.join(base, subpath)
+    
+    return None
 
 from torch import Tensor
 

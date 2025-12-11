@@ -69,7 +69,8 @@ def _coco_data_processor(
 
 
 DATASETS["coco"] = TextToImageDatasetConfig(
-    path="/dataset/coco",
+    # Path should be set via --eval.dataset_path CLI arg or DATAROOT env var
+    path="",
     loader=lambda path: load_dataset(
         "webdataset",
         split="train",
@@ -126,7 +127,8 @@ def _coco_data_processor_from_encodings(
 
 
 DATASETS["coco_preprocessed"] = TextToImageDatasetConfig(
-    path="/dataset/coco_preprocessed",
+    # Path should be set via --eval.dataset_path CLI arg or DATAROOT env var
+    path="",
     loader=lambda path: load_from_disk(path),
     data_processor=_coco_data_processor_from_encodings,
 )

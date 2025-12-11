@@ -188,12 +188,14 @@ DATASETS = {
         data_processor=_cc12m_wds_data_processor,
     ),
     "cc12m_disk": TextToImageDatasetConfig(
-        path="/dataset/cc12m_disk",
+        # Path should be set via --training.dataset_path CLI arg or DATAROOT env var
+        path="",
         loader=lambda path: load_from_disk(path),
         data_processor=partial(_cc12m_wds_data_processor, include_sample_id=True),
     ),
     "cc12m_preprocessed": TextToImageDatasetConfig(
-        path="/dataset/cc12m_preprocessed",
+        # Path should be set via --training.dataset_path CLI arg or DATAROOT env var
+        path="",
         loader=lambda path: load_from_disk(path),
         data_processor=_cc12m_data_processor_from_encodings,
     ),
@@ -218,6 +220,8 @@ def _validate_dataset(
     dataset_name: str, dataset_path: Optional[str] = None
 ) -> tuple[str, Callable, Callable]:
     """Validate dataset name and path."""
+    import os
+    
     if dataset_name not in DATASETS:
         raise ValueError(
             f"Dataset {dataset_name} is not supported. "
@@ -226,6 +230,20 @@ def _validate_dataset(
 
     config = DATASETS[dataset_name]
     path = dataset_path or config.path
+    
+    # If path is empty, try to construct from DATAROOT environment variable
+    if not path:
+        dataroot = os.environ.get("DATAROOT")
+        if dataroot:
+            path = os.path.join(dataroot, dataset_name)
+            logger.info(f"Using DATAROOT: {path}")
+        else:
+            raise ValueError(
+                f"Dataset path not specified for '{dataset_name}'. "
+                f"Either set DATAROOT environment variable (source env_baremetal.sh) "
+                f"or pass --training.dataset_path / --eval.dataset_path via CLI."
+            )
+    
     logger.info(f"Preparing {dataset_name} dataset from {path}")
     return path, config.loader, config.data_processor
 

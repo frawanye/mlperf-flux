@@ -11,7 +11,8 @@ import torchtitan.experiments.flux.job_config as jc
 
 @dataclass
 class Preprocessing:
-    output_dataset_path: str = "/datasets/preprocessed"
+    # Path should be set via --preprocessing.output_dataset_path CLI arg
+    output_dataset_path: str = ""
 
 
 @dataclass

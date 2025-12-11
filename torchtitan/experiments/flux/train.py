@@ -16,9 +16,9 @@ from typing import Iterable, Optional
 import numpy as np
 import torch
 from torch.distributed.elastic.multiprocessing.errors import record
-from torch.distributed.fsdp import FSDPModule
 
 import torchtitan.components.ft as ft
+from torchtitan.distributed.fsdp_compat import FSDPModule
 
 from torchtitan.config_manager import ConfigManager, JobConfig, TORCH_DTYPE_MAP
 from torchtitan.distributed import utils as dist_utils
@@ -38,6 +38,7 @@ from torchtitan.experiments.flux.utils import (
     create_position_encoding_for_latents,
     pack_latents,
     preprocess_data,
+    resolve_path,
     unpack_latents,
 )
 from torchtitan.tools import utils
@@ -145,14 +146,19 @@ class FluxTrainer(Trainer):
             job_config=job_config,
         )
 
-        if self.job_config.encoder.empty_encodings_path:
+        # Resolve empty_encodings_path from config or DATAROOT env var
+        empty_encodings_path = resolve_path(
+            self.job_config.encoder.empty_encodings_path,
+            "DATAROOT",
+            "empty_encodings"
+        )
+        
+        if empty_encodings_path:
             self.empty_t5_encodings = torch.from_numpy(
-                np.load(self.job_config.encoder.empty_encodings_path + "/t5_empty.npy")
+                np.load(empty_encodings_path + "/t5_empty.npy")
             ).to(device=self.device, dtype=self._dtype)[0]
             self.empty_clip_encodings = torch.from_numpy(
-                np.load(
-                    self.job_config.encoder.empty_encodings_path + "/clip_empty.npy"
-                )
+                np.load(empty_encodings_path + "/clip_empty.npy")
             ).to(device=self.device, dtype=self._dtype)[0]
         else:
             t5_tokenizer, clip_tokenizer = build_flux_tokenizer(self.job_config)
