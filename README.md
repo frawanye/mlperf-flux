@@ -16,201 +16,288 @@ These files plug in to the rest of torchtitan.
 }
 ```
 
+## Branch Modifications (vs. upstream torchtitan)
+
+This branch adds support for **baremetal execution on AMD GPUs with ROCm**. Key changes from upstream:
+
+| Category | Modification |
+|----------|-------------|
+| **FSDP2 Compatibility** | Added `torchtitan/distributed/fsdp_compat.py` to support ROCm PyTorch builds where FSDP2 APIs are under `torch.distributed._composable.fsdp` |
+| **Path Resolution** | Configs use empty defaults; paths are resolved at runtime via `DATAROOT`/`MODELROOT` environment variables |
+| **ROCm Environment** | Replaced CUDA-specific env vars (`PYTORCH_CUDA_ALLOC_CONF`) with ROCm equivalents (`PYTORCH_HIP_ALLOC_CONF`) |
+| **Setup Automation** | Added `setup_baremetal.sh` for automated conda env setup, PyTorch+ROCm installation, and data downloads |
+| **Slurm Support** | Added `run_baremetal.sub` for multi-node training on HPC clusters |
+| **Config Files** | Added/modified config files for different training scenarios.
+
+---
+
 # 2. Directions
-## Steps to configure machine
-To use this repository, please ensure your system can run docker containers and has appropriate GPU support (e.g. for CUDA GPUs, please make sure the appropriate drivers are set up)
 
-Without docker, follow the [instructions](https://github.com/pytorch/torchtitan?tab=readme-ov-file#installation) to install torchtitan and additionally install `requirements-mlperf.txt` and `torchtitan/experiments/flux/requirements.txt`.
+## Quick Start
 
-### Container setup
-To build the container:
+The fastest way to get started:
+
 ```bash
-cd torchtitan
-docker build -t <tag> -f Dockerfile .
+# 1. Run the setup script (creates conda env, installs dependencies)
+./setup_baremetal.sh --download-cc12m --dataroot /path/to/data --modelroot /path/to/models
+
+# 3. Source the generated environment file
+source env_baremetal.sh
+
+# 4. Run training
+NGPU=8 ./torchtitan/experiments/flux/run_train.sh --training.batch_size=16 --training.seed=1234
 ```
 
-Before entering the container, create a directory for the models to be downloaded, and a directory to be used as huggingface cache (necessary for some operations):
+## Detailed Setup Options
+
+### Option A: Automated Setup (Recommended)
+
+The `setup_baremetal.sh` script handles environment setup, dependency installation, and data downloads:
 
 ```bash
-mkdir <models directory>
-mkdir <hf_cache_directory>
+# Basic setup - downloads validation data only (COCO + empty_encodings)
+./setup_baremetal.sh --dataroot /path/to/data --modelroot /path/to/models
+
+# Include CC12M training data (~2.5TB)
+./setup_baremetal.sh --download-cc12m --dataroot /path/to/data --modelroot /path/to/models
+
+# Use specific ROCm version (auto-detects by default)
+./setup_baremetal.sh --rocm-version 6.2 --dataroot /path/to/data
+
+# Full setup including raw data and encoders
+./setup_baremetal.sh --all --hf-token <your_token> --dataroot /path/to/data
 ```
 
+The script:
+- Creates a conda environment (`flux-mlperf` by default)
+- Auto-detects your ROCm version and installs matching PyTorch
+- Installs all required dependencies
+- Downloads preprocessed validation data
+- Generates `env_baremetal.sh` with all required environment variables
+
+Run `./setup_baremetal.sh --help` for all options.
+
+### Option B: Manual Setup
+
+#### 1. Install ROCm and PyTorch
+
+Ensure ROCm is installed on your system. Then install PyTorch with ROCm support:
+
 ```bash
-docker run -it --rm \
---gpus all --ulimit memlock=-1 --ulimit stack=67108864 \
---network=host --ipc=host \
--v <hf_cache_directory>:/root/.cache \
--v <path for dataset storage>:/dataset \
--v <models directory>:/models \
-<tag> bash
+# For ROCm 6.4 (latest stable)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.4
+
+# For ROCm 6.2.x
+pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2
+
+# For ROCm 7.1 (nightly)
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/rocm7.1
 ```
 
-## Steps to download and verify data
-For all steps below, they are assumed to run inside the container
-
-### CC12M dataset
-To download the cleaned and subsetted dataset, run the following:
-
-**Note:** We reccomend training directly on preprocessed embeddings. To do that, skip [here](#preprocessing).
+#### 2. Install Dependencies
 
 ```bash
-cd /dataset
-bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) https://training.mlcommons-storage.org/metadata/flux-1-cc12m-disk.uri
+pip install -e .
+pip install -r requirements.txt
+pip install -r requirements-mlperf.txt
+pip install -r torchtitan/experiments/flux/requirements-flux.txt
 ```
 
-#### Optionally, to generate the data from scratch
+#### 3. Set Environment Variables
 
-Download the dataset with the following command. This requires ~1TB of storage.
+Create an environment file or export directly:
+
 ```bash
-HF_TRANSFER=1 huggingface-cli download --repo-type dataset pixparse/cc12m-wds --local-dir /dataset/cc12m-wds
+export DATAROOT=/path/to/datasets
+export MODELROOT=/path/to/models  # Only needed for non-preprocessed data
+export LOGDIR=/path/to/logs
+
+# ROCm-specific settings
+export PYTORCH_HIP_ALLOC_CONF="expandable_segments:True"
+export HIP_LAUNCH_BLOCKING=0
+export HSA_FORCE_FINE_GRAIN_PCIE=1
 ```
-Then, we remove problematic indices and keep only the first 10% of this data (rounded to 1,099,776 samples so it is nicely divisible by large powers of 2).
-Depending on your CPU, you may wish to change `--num_workers` and `--batch_size`. This only impacts the runtime of this script,
-the final result will be not be affected by these parameters.
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATAROOT` | Yes | Path to datasets directory |
+| `MODELROOT` | For raw data | Path to model encoders (T5, CLIP, autoencoder) |
+| `LOGDIR` | For Slurm | Path to log output directory |
+| `NGPU` | No | Number of GPUs per node (default: 8) |
+| `CONFIG_FILE` | No | Path to training config TOML |
+| `SEED` | No | Random seed (default: 1234) |
+| `HF_CACHE` | No | HuggingFace cache directory (default: `$HOME/.cache`) |
+| `CONDA_ENV_NAME` | No | Conda environment name (default: `flux-mlperf`) |
+
+### ROCm-Specific Variables (set automatically by env_baremetal.sh)
+
+| Variable | Description |
+|----------|-------------|
+| `PYTORCH_HIP_ALLOC_CONF` | HIP memory allocator configuration (not supported by the GPUs I tested on)|
+| `HIP_LAUNCH_BLOCKING` | HIP debugging flag (0=async, 1=sync) |
+| `HSA_FORCE_FINE_GRAIN_PCIE` | HSA memory settings for AMD GPUs |
+| `NCCL_*` | RCCL settings (compatible with NCCL variable names) |
+
+---
+
+## Steps to Download and Verify Data
+
+### Preprocessed Data (Recommended)
+
+Training on preprocessed embeddings avoids loading encoders during training and is faster:
 
 ```bash
-python torchtitan/experiments/flux/scripts/clean_cc12m.py --input_dir /dataset/cc12m-wds --output_dir /dataset/cc12m_disk --filter_file torchtitan/experiments/flux/scripts/problematic_indices.txt --num_workers=16 --batch_size 1000
+cd $DATAROOT
+
+# Preprocessed COCO validation (required)
+bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
+  https://training.mlcommons-storage.org/metadata/flux-1-coco-preprocessed.uri
+
+# Empty encodings for guidance (required)
+bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
+  https://training.mlcommons-storage.org/metadata/flux-1-empty-encodings.uri
+
+# Preprocessed CC12M training data (~2.5TB)
+bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
+  https://training.mlcommons-storage.org/metadata/flux-1-cc12m-preprocessed.uri
 ```
-(Optional) Remove the downloaded dataset to reclaim space: `rm -r /dataset/cc12m-wds`
 
-The filter file is included in this repository. It was generated using `torchtitan/experiments/flux/scripts/find_problematic_indices.py`.
+### Raw Data (Alternative)
 
-### COCO-2014 subset
-
-For validation purposes, each sample of the dataset is associated with a timestep that is used to evaluate it.
-For more details, consult the [evaluation algorithm](#quality-metric)
-To download the cleaned data, run the following:
-
-**Note:** We reccomend training directly on preprocessed embeddings. To do that, skip [here](#preprocessing).
+If you prefer to run preprocessing yourself or train without preprocessing:
 
 ```bash
-cd /dataset
-bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) https://training.mlcommons-storage.org/metadata/flux-1-coco.uri
+cd $DATAROOT
+
+# Raw CC12M dataset
+bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
+  https://training.mlcommons-storage.org/metadata/flux-1-cc12m-disk.uri
+
+# Raw COCO validation dataset
+bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
+  https://training.mlcommons-storage.org/metadata/flux-1-coco.uri
 wget https://training.mlcommons-storage.org/flux_1/datasets/val2014_30k.tsv
 ```
 
-#### Optionally, to generate the data from scratch
+### Download Model Encoders (for raw data only)
 
-The number of samples is taken from the previous stable diffusion benchmark, but rounded slightly to be divisible by large powers of 2 (29,696).
-
-1. download coco-2014 validation dataset: `DOWNLOAD_PATH=/dataset/coco2014_raw bash torchtitan/experiments/flux/scripts/coco-2014-validation-download.sh`
-2. Create the validation subset, resize to 256x256 and convert to webdataset: `python torchtitan/experiments/flux/scripts/coco_to_webdataset.py --input-images-dir /dataset/coco2014_raw/val2014 --input-captions-file /dataset/coco2014_raw/annotations/captions_val2014.json --output-dir /dataset/coco --num-samples 29696 --width 256 --height 256 --samples-per-shard 1000 --output-tsv-file /dataset/val2014_30k.tsv`
-
-##### Download the encoders
-Download the autoencoder, t5 and clip models from HuggingFace. For the autoencoder, you must acquire your own access token from hf
-with access rights to https://huggingface.co/black-forest-labs/FLUX.1-schnell.
-
-**Note:** If training from preprocessed embeddings, this step is not required.
+Required only if training from raw (non-preprocessed) data:
 
 ```bash
-python torchtitan/experiments/flux/scripts/download_encoders.py --local_dir /models --hf_token <your_access_token>
+python torchtitan/experiments/flux/scripts/download_encoders.py \
+  --local_dir $MODELROOT \
+  --hf_token <your_access_token>
 ```
 
-### Preprocessing
-Since the encoders are frozen during training, it is possible to do additional preprocessing to avoid having to repeatedly encode data on the fly.
+You need access rights to https://huggingface.co/black-forest-labs/FLUX.1-schnell.
 
-To download this data, run the following:
+---
+
+## Running Training
+
+### Single-Node Training
 
 ```bash
-cd /dataset
-bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) https://training.mlcommons-storage.org/metadata/flux-1-cc12m-preprocessed.uri
-bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) https://training.mlcommons-storage.org/metadata/flux-1-coco-preprocessed.uri
-bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) https://training.mlcommons-storage.org/metadata/flux-1-empty-encodings.uri
+# Source environment (sets DATAROOT, activates conda, etc.)
+source env_baremetal.sh
+
+# Run with preprocessed data
+NGPU=4 ./torchtitan/experiments/flux/run_train.sh \
+  --training.batch_size=16 \
+  --training.seed=1234
+
+# Run with custom config
+CONFIG_FILE=./torchtitan/experiments/flux/train_configs/flux_schnell_mlperf.toml \
+NGPU=8 ./torchtitan/experiments/flux/run_train.sh \
+  --training.batch_size=16
 ```
 
-The above requires ~2.5TB of storage.
-
-
-#### Optionally, to run the preprocessing yourself
-
-We reccomend doing this over multiple GPUs. Depending on the GPU memory, you may need to adjust the batch size.
-**Due to the dataset size, using a different number of GPUs or batch size may result in hangs. Please make sure the number of samples is divisible by batch_size x NGPUs**
-To do this, run:
+### Multi-Node Slurm Training
 
 ```bash
-NGPU=8 torchtitan/experiments/flux/scripts/run_preprocessing.sh --training.dataset_path=/dataset/cc12m_disk --training.dataset=cc12m_disk --eval.dataset= --training.batch_size=256 --preprocessing.output_dataset_path=/dataset/cc12m_preprocessed
+# Source environment first
+source env_baremetal.sh
+
+# Set log directory
+export LOGDIR=/path/to/logs
+
+# Submit job (GPU resources passed via sbatch)
+sbatch --nodes=4 --gpus-per-node=4 --time=04:00:00 run_baremetal.sub
+
+# Or with additional training overrides
+sbatch --nodes=4 --gpus-per-node=4 run_baremetal.sub --training.batch_size=32
 ```
 
-The above may take a few hours and will require approximately 2.5TB of storage.
+**Note:** Edit `run_baremetal.sub` to customize module loading for your cluster. GPU resources should be requested via `sbatch` command-line options rather than hardcoded in the script.
 
-For the validation dataset:
-```bash
-NGPU=4 torchtitan/experiments/flux/scripts/run_preprocessing.sh --training.dataset=coco --training.dataset_path=/dataset/coco --eval.dataset= --training.batch_size=128 --preprocessing.output_dataset_path=/dataset/coco_preprocessed
-```
-Additionally, this script will generate encodings representing empty encodings which are used for guidance.
+---
 
-(Optional) Remove the intermediate parquet files to reclaim space: `rm -r /dataset/cc12m_preprocessed /dataset/coco_preprocessed`
+## Preprocessing (Optional)
 
-To make use of the preprocessed data, switch to the config file `flux_schnell_mlperf_preprocessed.toml`.
-This sets `--training.dataset=cc12m_preprocessed` and `--training.dataset_path=/dataset/cc12m_preprocessed/*`
-for the training data, and `--eval.dataset=coco_preprocessed`, `--eval.dataset_path=/dataset/coco_preprocessed/*` for the eval data,
-while also avoiding loading encoders with `--encoder.autoencoder_path= --encoder.t5_encoder= --encoder.clip_encoder=`.
-
-### Steps to run and time
-All steps below are assumed to be run inside the container. 
-
-The training script uses config files to pass parameters. You can find these in `torchtitan/experiments/flux/train_configs`.
-Additionally, parameters can be set or overridden in the cli.
-For example, passing `--optimizer.lr=1e-3` will set the learning rate to `1e-3`.
-An exhaustive list of all these parameters can be seen by running the training by running `CONFIG=torchtitan/experiments/flux/train_configs/flux_schnell_mlperf.toml NGPU=1 bash torchtitan/experiments/flux/run_train.sh --help` with the desired config file.
-
-Finally, the launch scripts rely on environment variables. These are explained below.
-
+Since the encoders are frozen during training, you can preprocess data offline to avoid encoding on the fly.
 
 ```bash
-docker run -it --rm \
---gpus all --ipc=host --ulimit memlock=-1 \
---ulimit stack=67108864 \
---network=host --ipc=host \
--v ~/.ssh:/root/.ssh \
--v hf_cache:/root/.cache \
--v <path for dataset storage>:/dataset/ \
--v <path for model storage>/coco:/model \
-<tag> bash
+export DATAROOT=/path/to/datasets
+
+# Preprocess CC12M training data
+NGPU=8 torchtitan/experiments/flux/scripts/run_preprocessing.sh \
+  --training.dataset_path=$DATAROOT/cc12m_disk \
+  --training.dataset=cc12m_disk \
+  --eval.dataset= \
+  --training.batch_size=256 \
+  --preprocessing.output_dataset_path=$DATAROOT/cc12m_preprocessed
+
+# Preprocess COCO validation data
+NGPU=4 torchtitan/experiments/flux/scripts/run_preprocessing.sh \
+  --training.dataset=coco \
+  --training.dataset_path=$DATAROOT/coco \
+  --eval.dataset= \
+  --training.batch_size=128 \
+  --preprocessing.output_dataset_path=$DATAROOT/coco_preprocessed
 ```
 
-#### Basic run
-Environment variables are passed to the run script (launch script in the case of slurm).
-Variables passed after are passed to torchtitan. These variables override those defined in the config file.
-For a complete list of options, run the train script with `--help`.
+**Note:** Due to dataset size, the number of samples must be divisible by `batch_size × NGPUs`.
 
-`CONFIG=torchtitan/experiments/flux/train_configs/flux_schnell_mlperf.toml NGPU=<number of GPUs> bash torchtitan/experiments/flux/run_train.sh --training.batch_size=1 --training.seed=1234`
+---
 
-#### Longer run
-**For longer runs, we expect a system with a slurm-based cluster.**
+## Training Configuration
 
-Make sure to edit the headers for the run.sub script to match the requirements of your cluster (in particular the account field).
+The training script uses TOML config files in `torchtitan/experiments/flux/train_configs/`. Parameters can be overridden via CLI:
 
 ```bash
-export DATAROOT=<path_to_data>
-export MODELROOT=<path_to_saved_encoders>
-export LOGDIR=<output directory>
-export CONFIG_FILE=torchtitan/experiments/flux/train_configs/flux_schnell_mlperf.toml
-export CONT=<tag>
-export SEED=<seed>
-sbatch -N <number of nodes> -t <time> run.sub
+# See all available parameters
+CONFIG_FILE=./torchtitan/experiments/flux/train_configs/flux_schnell_mlperf_preprocessed.toml \
+NGPU=1 ./torchtitan/experiments/flux/run_train.sh --help
 ```
 
-`DATAROOT` should be set to the path where data resides. e.g. `${DATAROOT}/cc12m_disk` should point to the CC12M training dataset. This will be mounted under `/dataset/`.
-`MODELROOT` should be set to the point where the previously downloaded encoders reside. If `SEED` is not set, a random one will be assigned.
+### Key Config Files
 
-Any additional parameters may be passed after the run.sub, and will be forwarded to the training script, overriding those in the config.
-e.g. if the datasets were saved with different names from those in the instructions above, you may explicitly set the dataset paths with `--training.dataset_path=/dataset/...` and `--eval.dataset_path=`.
+| Config | Description |
+|--------|-------------|
+| `flux_schnell_mlperf_preprocessed.toml` | **Recommended.** For preprocessed embeddings |
+| `flux_schnell_mlperf.toml` | For raw data (requires encoders) |
 
-By default, checkpointing is disabled. You may enable it by setting the env var ENABLE_CHECKPOINTING=True. You can set the checkpointing interval.
-with `--checkpoint.interval=<steps>`.
+### Common Overrides
 
-Additionally, by default, the model will run with HSDP (sharding over gpus in the same node, and using DDP across different nodes).
-You may modify this by passing `--parallelism.data_parallel_replicate_degree` and `--parallelism.data_parallel_shard_degree`.
+```bash
+--training.batch_size=16          # Batch size per GPU
+--training.seed=1234              # Random seed
+--training.steps=1000             # Training steps
+--training.compile                # Enable torch.compile
+--parallelism.data_parallel_replicate_degree=N  # DDP across N nodes
+--parallelism.data_parallel_shard_degree=N      # FSDP shard degree
+--checkpoint.enable_checkpoint    # Enable checkpointing
+--checkpoint.interval=1000        # Checkpoint every N steps
+```
 
-Finally, torch.compile is disabled by default. To enable it, pass `--training.compile`.
-
-Given the substantial variability among Slurm clusters, users are encouraged to review and adapt these scripts to fit their specific cluster specifications.
-
-In any case, the dataset and checkpoints are expected to be available to all the nodes.
+---
 
 # 3. Dataset/Environment
+
 ### Publication/Attribution
 We use the CC12M dataset available at https://huggingface.co/datasets/pixparse/cc12m-wds
 
@@ -222,6 +309,7 @@ We use the CC12M dataset available at https://huggingface.co/datasets/pixparse/c
   year = {2021},
 }
 ```
+
 We use the COCO2014 dataset for validation.
 
 ```
@@ -236,7 +324,7 @@ We use the COCO2014 dataset for validation.
 ```
 
 ### Data preprocessing
-For both datasets, images are resized to 256x256 using a bicubic interpolation.
+For both datasets, images are resized to 256x256 using bicubic interpolation.
 
 The ~10% of the CC12M dataset is used (1,099,776 samples).
 The COCO-2014-validation dataset consists of 40,504 images and 202,654 annotations. 
@@ -244,10 +332,13 @@ However, our benchmark uses only a subset of 29,696 images and annotations chose
 
 Optionally, the training and validation datasets are preprocessed by running the encoders offline before training.
 
+---
+
 # 4. Model
+
 ### Publication/Attribution
 This model largely follows the Flux.1-schnell model, as implemented by torchtitan.
-In turn, the model code is largely based on the model open-sourced in [huggingface](https://huggingface.co/black-forest-labs/FLUX.1-schnell) by [Black Forest Labs](https://bfl.ai/).
+The model code is largely based on the model open-sourced in [huggingface](https://huggingface.co/black-forest-labs/FLUX.1-schnell) by [Black Forest Labs](https://bfl.ai/).
 
 ```
 @inproceedings{esser2024scaling,
@@ -280,15 +371,21 @@ In turn, the model code is largely based on the model open-sourced in [huggingfa
 
 ### Loss function
 The MSE calculated over latents is used for the loss
+
 ### Optimizer
 AdamW
+
 ### Precision
 The model runs with BF16 by default. This can be changed by setting `--training.mixed_precision_param=float32`.
+
 ### Weight initialization
 The weight initialization strategy is taken from torchtitan. It consists of a mixture of constant, Xavier and Normal initialization.
-For precise details, we encourage the consultation of the code at `torchtitan/experiments/flux/model/model.py:init_weights`.
+For precise details, consult the code at `torchtitan/experiments/flux/model/model.py:init_weights`.
+
+---
 
 # 5. Quality
+
 ### Quality metric
 Validation loss averaged over 8 equidistant time steps [0, 7/8], as described in [Scaling Rectified Flow Transformers for High-Resolution Image Synthesis](https://arxiv.org/pdf/2403.03206).
 The validation dataset is prepared in advance so that each sample is associated with a timestep.
@@ -325,7 +422,9 @@ a simple average of all loss values is equivalent to the above.
 
 ### Quality target
 0.586
+
 ### Evaluation frequency
 Every 262,144 training samples.
+
 ### Evaluation thoroughness
 29,696 samples
