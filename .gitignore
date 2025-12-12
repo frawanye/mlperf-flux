@@ -25,3 +25,7 @@ _remote_module_non_scriptable.py
 
 # devcontainer
 .devcontainer
+env_baremetal.sh
+datasets/
+logs/
+slurm-*.out
