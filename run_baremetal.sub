@@ -1,0 +1,175 @@
+#!/bin/bash
+#SBATCH --exclusive
+#SBATCH -J mlperf_training:flux #job name
+#XSBATCH -A <account> #account
+#XSBATCH -p batch         #partition
+#XSBATCH -t 04:00:00    #wall time limit, hr:min:sec
+#XSBATCH -N4            #number of nodes
+
+# Baremetal (non-container) training script for AMD GPUs with ROCm
+#
+# Usage: sbatch run_baremetal.sub [torchrun_overrides...]
+# 
+# Required Environment Variables:
+#   DATAROOT              - Path to data directory (e.g., /path/to/datasets)
+#   LOGDIR                - Path to log output directory
+#
+# Optional Environment Variables:
+#   MODELROOT             - Path to model encoders (only for non-preprocessed data)
+#
+# Optional Environment Variables:
+#   CONFIG_FILE           - Path to training config TOML file (default: flux_schnell_mlperf_preprocessed.toml)
+#   NGPU=8                - GPUs per node
+#   LOG_RANK=0            - Which rank to log from
+#   ENABLE_TB=True        - Enable TensorBoard
+#   ENABLE_CHECKPOINTING=True - Enable checkpointing
+#   HF_CACHE              - HuggingFace cache directory (default: $HOME/.cache)
+#   CONDA_ENV_NAME        - Conda environment name (default: flux-mlperf)
+#
+# Example:
+#   export DATAROOT=/path/to/data MODELROOT=/path/to/models LOGDIR=/path/to/logs
+#   sbatch run_baremetal.sub --training.steps=1000
+
+set -ex
+
+# =============================================================================
+# Site-specific module loading (customize for your cluster)
+# =============================================================================
+# Uncomment and modify as needed for your HPC environment:
+# module load rocm/6.0
+# module load anaconda3
+module load libfabric
+module load rocm/6.2.2
+
+# =============================================================================
+# Source environment file if it exists
+# =============================================================================
+# Use SLURM_SUBMIT_DIR (directory where sbatch was called) since Slurm copies
+# the script to a spool directory
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+if [[ -f "${SCRIPT_DIR}/env_baremetal.sh" ]]; then
+    echo "Sourcing ${SCRIPT_DIR}/env_baremetal.sh"
+    source "${SCRIPT_DIR}/env_baremetal.sh"
+fi
+
+# Change to submit directory so relative paths work
+cd "${SCRIPT_DIR}"
+
+# Activate conda environment if specified
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-"flux-mlperf"}
+if command -v conda &> /dev/null; then
+    eval "$(conda shell.bash hook)"
+    conda activate "$CONDA_ENV_NAME"
+fi
+
+# =============================================================================
+# Validate required environment variables
+# =============================================================================
+required_vars=("DATAROOT" "LOGDIR")
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "Error: Required environment variable $var is not set"
+        echo "Required: DATAROOT, LOGDIR"
+        echo "Optional: MODELROOT (only needed for non-preprocessed data)"
+        exit 1
+    fi
+done
+
+# =============================================================================
+# Configuration
+# =============================================================================
+NGPU=${NGPU:-"8"}
+if [ -z "${SEED}" ]; then
+    # SEED=$RANDOM
+    # echo "SEED not set, using random seed: ${SEED}"
+    SEED=1234
+    echo "SEED not set, using: 1234"
+fi
+
+export LOG_RANK=${LOG_RANK:-0}
+CONFIG_FILE=${CONFIG_FILE:-"$HOME/mlperf-flux/torchtitan/experiments/flux/train_configs/flux_test_mlperf_preprocessed.toml"}
+HF_CACHE=${HF_CACHE:-"$HOME/.cache"}
+export HF_HOME="${HF_CACHE}"
+export HF_HUB_CACHE="${HF_CACHE}/huggingface/hub"
+
+# TensorBoard configuration
+ENABLE_TB=${ENABLE_TB:-False}
+if [[ ${ENABLE_TB} = True ]]; then
+    TB_FLAG="--metrics.enable_tensorboard"
+else
+    TB_FLAG=""
+fi
+
+# Checkpointing configuration
+ENABLE_CHECKPOINTING=${ENABLE_CHECKPOINTING:-False}
+if [[ ${ENABLE_CHECKPOINTING} = True ]]; then
+    CKPT_FLAG="--checkpoint.enable_checkpoint --checkpoint.folder=${LOGDIR}/checkpoint --checkpoint.interval=1000"
+else
+    CKPT_FLAG=""
+fi
+
+mkdir -p ${LOGDIR}
+overrides=""
+if [ $# -ne 0 ]; then
+    overrides="$*"
+fi
+
+# =============================================================================
+# Node discovery
+# =============================================================================
+mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+echo "Node list:"
+for node in "${nodes[@]}"; do
+    echo "  - $node"
+done
+echo "Total nodes: ${#nodes[@]}"
+
+head_node=${nodes[0]}
+head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
+echo "Head node IP: $head_node_ip"
+
+# =============================================================================
+# ROCm/RCCL Environment Variables
+# =============================================================================
+export LOGLEVEL=INFO
+export PYTHONFAULTHANDLER=1
+
+# RCCL debugging (compatible with NCCL variable names)
+export NCCL_DEBUG=WARN
+# optional debug settings:
+# export NCCL_DEBUG=INFO
+# export NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV
+
+# ROCm-specific settings
+export HIP_LAUNCH_BLOCKING=0
+export PYTORCH_HIP_ALLOC_CONF="expandable_segments:True"
+
+# RCCL network settings (adjust for your cluster's network)
+export NCCL_BUFFSIZE=2097152
+# export NCCL_SOCKET_IFNAME="eth0,en,eth,em,bond"
+
+# HSA settings for AMD GPUs
+export HSA_FORCE_FINE_GRAIN_PCIE=1
+
+# =============================================================================
+# Export environment variables for Python
+# =============================================================================
+# The Python code will automatically find datasets in $DATAROOT/<dataset_name>
+export DATAROOT
+export MODELROOT
+
+echo "Training configuration:"
+echo "  DATAROOT:    ${DATAROOT}"
+echo "  MODELROOT:   ${MODELROOT:-"(not set)"}"
+echo "  LOGDIR:      ${LOGDIR}"
+echo "  CONFIG_FILE: ${CONFIG_FILE}"
+
+# =============================================================================
+# Launch training
+# =============================================================================
+srun --ntasks-per-node=1 --output=${LOGDIR}/slurm-%j.out \
+torchrun --nnodes ${#nodes[@]} --nproc_per_node ${NGPU} --rdzv_id 101 --rdzv_backend c10d --rdzv_endpoint "$head_node_ip:29500" --local-ranks-filter ${LOG_RANK} \
+--role rank --tee 3 -m torchtitan.experiments.flux.train --job.config_file ${CONFIG_FILE} ${TB_FLAG} ${CKPT_FLAG} --job.dump_folder=${LOGDIR} \
+--parallelism.data_parallel_replicate_degree=${#nodes[@]} --parallelism.data_parallel_shard_degree=${NGPU} --training.seed=${SEED} \
+$overrides
+
